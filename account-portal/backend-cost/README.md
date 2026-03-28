@@ -5,7 +5,7 @@
 ```
 [EC2 6대] --agent(60s)--> S3 metrics/enhanced_v2/ (JSONL)
                                     |
-                              Glue DDL 테이블
+                              Glue Crawler
                                     |
                                  Athena
                                /   |   \
@@ -24,14 +24,14 @@
 
 ## 인스턴스 구성
 
-| Instance ID | 타입 | 이름 | 일비용 (USD/KRW) | 용도 |
+| Instance ID | 타입 | 이름 | 예상 일비용(USD) | 용도 |
 |---|---|---|---|---|
-| i-0aaaaaaaaaaaaaa02 | p5.48xlarge | acme-or-p5 | $104/약 150,000 | GPU LLM 학습 |
-| i-0aaaaaaaaaaaaaa04 | p4d.24xlarge | acme-or-p4d | $285/약 410,000 | GPU 연구 |
-| i-0aaaaaaaaaaaaaa06 | p4de.24xlarge | acme-or-p4de | $356/약 510,000 | GPU 연구 |
-| i-0aaaaaaaaaaaaaa03 | g5.12xlarge | acme-or-g5 | $81/약 115,000 | GPU 연구 |
-| i-0aaaaaaaaaaaaaa05 | r7i.4xlarge | acme-or-zonea-r7 | $16/약 23,000 | CPU 전용 |
-| i-0aaaaaaaaaaaaaa01 | g4dn.xlarge | HeadNode (G4DN) | $7.5/약 10,000 | ParallelCluster 헤드노드 |
+| i-0aaaaaaaaaaaaaa02 | p5.48xlarge | acme-or-p5 | $104 | LLM 학습 |
+| i-0aaaaaaaaaaaaaa04 | p4d.24xlarge | acme-or-p4d | $285 | GPU 연구 |
+| i-0aaaaaaaaaaaaaa06 | p4de.24xlarge | acme-or-p4de | $356 | GPU 연구 |
+| i-0aaaaaaaaaaaaaa03 | g5.12xlarge | acme-or-g5 | $81 | GPU 연구 |
+| i-0aaaaaaaaaaaaaa05 | r7i.4xlarge | acme-or-zonea-r7 | $16 | CPU 전용 |
+| i-0aaaaaaaaaaaaaa01 | g4dn.xlarge | HeadNode (G4DN) | $7.5 | ParallelCluster 헤드노드 |
 
 ## S3 버킷: acme-or-cur-stg
 
@@ -84,7 +84,7 @@ GROUP BY instance_id, p.project, p.username
 - 소스 버킷: acme-or
 - 대상: acme-or-cur-stg/inventory/
 - ID: project-weekly-inventory
-- 주기: Weekly (AWS 자체 스케줄, 특정 요일 지정 불가)
+- 주기: Weekly
 - 필터: `project/` prefix
 - 형식: Parquet
 - 필드: Size, LastModifiedDate, StorageClass
@@ -135,37 +135,15 @@ backend-cost/
 | `GET /api/cost-monitoring/mappings` | 매핑 데이터 조회 |
 | `PUT /api/cost-monitoring/mappings/<category>` | 매핑 데이터 수정 (category별) |
 
-### 비용 배분 로직 (EC2 4단계)
+### 비용 배분 로직
 
-1. **CUR 데이터 조회**: 인스턴스별 일 비용 조회 (SP/RI 할인 반영)
-2. **GPU/CPU 비용 분리**: 인스턴스 타입별 GPU/CPU 비율로 일비용을 GPU 풀과 CPU 풀로 분리
-3. **에이전트 데이터 기반 weight 계산 → 프로젝트별 배분**
-   - GPU weight: `samples × max(cpu, 10%) × (1 + gpu_count)`
-   - CPU weight: `samples × max(cpu, 1%) / 100`
+1. CUR에서 인스턴스별 일 비용 조회 (SP/RI 할인 반영)
+2. 에이전트 데이터에서 프로젝트별 weight 계산
+   - GPU 프로세스: `samples * max(cpu, 10%) * (1 + gpu_count)`
+   - CPU 프로세스: `samples * max(cpu, 1%) / 100`
    - cpu=0이어도 프로세스가 존재하면 최소 weight 부여
-   - GPU 풀은 GPU weight 비율로, CPU 풀은 CPU weight 비율로 각 프로젝트에 배분
-4. **미배분 처리**: GPU 프로세스가 없는 인스턴스의 GPU 비용은 미배분(Unallocated)으로 처리
-
-### GPU/CPU 비율
-
-GPU 비율 = (GPU 인스턴스 시간당 가격 - 동일 vCPU 범용 인스턴스 시간당 가격) ÷ GPU 인스턴스 시간당 가격
-
-기준: AWS EC2 On-Demand Pricing (us-west-2), 범용 인스턴스 m5 vCPU당 $0.048/hr
-
-| 인스턴스 | 타입 | GPU 비율 | CPU 비율 | 산정 근거 |
-|---|---|---|---|---|
-| P5 | p5.48xlarge | 83.3% | 16.7% | ($55.040-$9.216)/$55.040 |
-| P4D | p4d.24xlarge | 79.0% | 21.0% | ($21.958-$4.608)/$21.958 |
-| P4DE | p4de.24xlarge | 83.2% | 16.8% | ($27.447-$4.608)/$27.447 |
-| G5 | g5.12xlarge | 59.4% | 40.6% | ($5.672-$2.304)/$5.672 |
-| R7i | r7i.4xlarge | 0% | 100% | CPU 전용 |
-| G4DN | g4dn.xlarge | 63.5% | 36.5% | ($0.526-$0.192)/$0.526 |
-
-참고:
-- [AWS EC2 On-Demand Pricing](https://aws.amazon.com/ec2/pricing/on-demand/)
-- [AWS EC2 Accelerated Computing Instances](https://docs.aws.amazon.com/ec2/latest/instancetypes/ac.html)
-- [AWS EC2 General Purpose Instances](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html)
-- [AWS EC2 Instance Type Specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-type-specifications.html)
+3. GPU/CPU 비용 분리 배분: GPU weight로 GPU 비용, CPU weight로 CPU 비용
+4. 환율 적용: BOK ECOS API 일별 환율 (KRW)
 
 ### 스토리지 비용 배분
 
@@ -173,16 +151,6 @@ GPU 비율 = (GPU 인스턴스 시간당 가격 - 동일 vCPU 범용 인스턴�
 - FSx: EC2 비용 비율로 프로젝트별 배분
 - 월말 확정: 과거 월은 인벤토리 스냅샷 고정 (`inventory-snapshots/YYYY-MM.json`)
 - 현재 월: 라이브 인벤토리 사용 (주간 갱신 반영)
-- 전달의 완전한 스토리지 데이터 확인: 익월 3일 00:00 이후 (CUR 48시간 지연)
-
-### 캐시 정책
-
-| 대상 | TTL | 비고 |
-|---|---|---|
-| 일별 비용 | 1시간 | 모든 날짜 동일 |
-| 월별 비용 (과거 월) | 24시간 | 확정된 데이터 |
-| 월별 비용 (현재 월) | 1시간 | 데이터 갱신 반영 |
-| 매핑 설정 변경 시 | 즉시 초기화 | `_daily_cache.clear()`, `_monthly_cache.clear()` |
 
 ### 유효하지 않은 프로젝트 필터링
 
@@ -232,8 +200,6 @@ ExcelJS 라이브러리로 클라이언트에서 생성.
 - UID -> 사용자명 매핑
 - 인스턴스 ID -> 이름 매핑
 
-주의: 매핑 설정의 동시 수정은 권장하지 않음 (이전 변경안이 사라질 수 있음)
-
 ## mappings.json 구조
 
 | 키 | 설명 | 예시 |
@@ -243,21 +209,11 @@ ExcelJS 라이브러리로 클라이언트에서 생성.
 | uid_to_username | Linux UID -> 사용자명 | `"1001": "admin"` |
 | instance_names | 인스턴스 ID -> 표시 이름 | `"i-0aaaaaaaaaaaaaa04": "P4D"` |
 
-대시보드 설정 UI 또는 파일 직접 수정으로 변경 가능. 변경 후 캐시 자동 초기화.
+대시보드 설정 UI 또는 파일 직접 수정으로 변경 가능. 변경 후 캐시 초기화 필요.
 
 ## 미배분 비용
 
 GPU 프로세스가 없는 인스턴스의 GPU 비용은 배분 대상이 없어 미배분으로 남는다. 정상 동작이다.
-
-## 비용 정합성 검증 (2026년 2월)
-
-| 검증 항목 | 결과 |
-|---|---|
-| 검증 기간 | 2/1 ~ 2/28 (28일) |
-| CUR 총비용 합계 | $24,918.85 |
-| 배분 + 미배분 합계 | $24,918.85 |
-| 일별 차이 최대값 | $0.01 (부동소수점 반올림) |
-| 누수·중복 | $0 |
 
 ## 트러블슈팅
 
@@ -277,7 +233,6 @@ GROUP BY instance_id
 ```
 
 특정 날짜에 에이전트 데이터가 없으면 해당 인스턴스의 컨테이너 상태를 확인한다.
-
 ## 빌드 및 배포
 
 ```bash
@@ -286,6 +241,7 @@ cd /home/app/account-portal
 docker compose -f docker-compose-fixed.yml up -d --build backend-cost
 
 # 프론트엔드
+export PATH=/home/ubuntu/.vscode-server/cli/servers/Stable-7d842fb85a0275a4a8e4d7e040d2625abbf7f084/server:$PATH
 cd /home/app/account-portal/frontend
 node node_modules/.bin/vite build
 docker restart userportal-nginx
@@ -293,3 +249,4 @@ docker restart userportal-nginx
 # 캐시 초기화
 curl -s -X POST "http://203.0.113.10/api/cost-monitoring/clear-cache"
 ```
+
