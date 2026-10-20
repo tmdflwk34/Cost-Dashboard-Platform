@@ -1,10 +1,11 @@
+import os
 import requests
 import redis
 from datetime import datetime, timedelta
 
 redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
 
-BOK_API_KEY = 'REMOVED_EXPOSED_CREDENTIAL'
+BOK_API_KEY = os.environ.get('BOK_API_KEY', '').strip()
 
 def get_exchange_rate(date_str, _depth=0):
     """
@@ -21,6 +22,10 @@ def get_exchange_rate(date_str, _depth=0):
     if cached:
         return float(cached)
     
+    # 캐시가 없고 API 키가 설정되지 않으면 호출자의 기본 환율을 사용
+    if not BOK_API_KEY:
+        return None
+
     # 한국은행 API 호출
     date_fmt = date_str.replace('-', '')  # YYYYMMDD
     url = f'https://ecos.bok.or.kr/api/StatisticSearch/{BOK_API_KEY}/json/kr/1/1/731Y003/D/{date_fmt}/{date_fmt}/0000003'
@@ -34,8 +39,9 @@ def get_exchange_rate(date_str, _depth=0):
             # 영구 캐시 (과거 환율은 변하지 않음)
             redis_client.setex(cache_key, 86400 * 365, str(rate))
             return rate
-    except Exception as e:
-        print(f'Exchange rate API error for {date_str}: {e}')
+    except Exception:
+        # 요청 URL에는 API 키가 포함되므로 예외 내용은 기록하지 않음
+        print(f'Exchange rate API error for {date_str}')
     
     # 데이터 없음 (주말/공휴일/대체휴무) → 가장 가까운 영업일 환율 찾기
     from datetime import datetime, timedelta
