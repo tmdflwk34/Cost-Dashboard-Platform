@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "version": "example",
+    "description": "Example mapping. Copy to mapping.json and fill with real values (do not commit)."
+  },
+  "system_accounts": [
+    "root",
+    "ubuntu",
+    "ssm-user",
+    "daemon",
+    "nobody"
+  ],
+  "known_users": {
+    "user01": "project_01",
+    "user02": "project_02"
+  },
+  "fallback_project": "Unassigned_User"
+}

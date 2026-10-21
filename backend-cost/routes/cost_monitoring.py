@@ -19,9 +19,13 @@ def _kst_today():
 import json, os
 
 _MAPPINGS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'mappings.json')
+# 실제 매핑(과제/사용자/인스턴스)은 기밀이라 저장소에 두지 않는다(.gitignore).
+# 파일이 없으면 예제 매핑으로 기동한다.
+_MAPPINGS_EXAMPLE_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'mappings.example.json')
 
 def _load_mappings():
-    with open(_MAPPINGS_FILE, 'r', encoding='utf-8') as f:
+    path = _MAPPINGS_FILE if os.path.exists(_MAPPINGS_FILE) else _MAPPINGS_EXAMPLE_FILE
+    with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def _save_mappings(data):
